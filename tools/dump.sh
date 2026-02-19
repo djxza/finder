@@ -19,13 +19,7 @@ log "SOURCE FILES"
 find src -type f \( -name "*.cpp" -o -name "*.hpp" -o -name "*.h" \) \
 -exec sh -c 'echo "\n--- {} ---"; sed -n "1,300p" {}' \; | tee -a "$OUT"
 
-log "SHADERS"
-find res/shaders -type f \( -name "*.sc" \) \
--exec sh -c 'echo "\n--- {} ---"; sed -n "1,300p" {}' \; | tee -a "$OUT"
-
 cat $OUT | xclip -selection clipboard
-
 
 echo
 echo "Done. Upload or paste build_dump.txt"
-

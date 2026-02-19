@@ -3,18 +3,29 @@
 ===== TREE =====
 
 .
+├── a.txt
 ├── build_dump.txt
-├── f
+├── cmdadada
+├── LICENSE
 ├── makefile
 ├── project.json
+├── README.md
 ├── src
+│   ├── dir.c
+│   ├── dir.h
+│   ├── item.c
+│   ├── item.h
 │   ├── main.c
-│   ├── window.c
-│   └── window.h
+│   ├── state.c
+│   ├── state.h
+│   ├── ui.c
+│   ├── ui.h
+│   ├── utils.c
+│   └── utils.h
 └── tools
     └── dump.sh
 
-3 directories, 8 files
+3 directories, 19 files
 
 ===== MAKEFILE =====
 
@@ -49,7 +60,7 @@ ifeq ($(LANG),C)
     else
         CC := $(COMPILER_PATH)
     endif
-    STD := c2x
+#    STD := c2x
     SRC_FILES := $(shell find $(SRC_DIR) -name "*.c" 2>/dev/null)
 else
     # C++ project configuration (default)
@@ -110,7 +121,8 @@ LIB_PATHS := -L$(LIB_DIR)
 LIB_PATHS += -lm -lncurses
 
 # Compiler flags
-CFLAGS := -std=$(STD) $(WARNINGS) $(OPTIMIZE) $(INCLUDES) \
+CFLAGS := # -std=$(STD)
+CFLAGS += $(WARNINGS) $(OPTIMIZE) $(INCLUDES) \
           -fdiagnostics-color=always \
           -MMD -MP  # Generate dependency files
 
@@ -244,26 +256,147 @@ print-%:
 
 ===== SOURCE FILES =====
 
-\n--- src/window.h ---
+\n--- src/dir.h ---
 #pragma once
 
+#include "item.h"
+#include "state.h"
+
+// Build a new path by concatenating base and name (caller must free)
+char *build_path(const char *base, const char *name);
+
+// Get parent directory path (caller must free). Returns NULL if already root.
+char *get_parent_path(const char *path);
+
+// List contents of the directory given by state (handle already opened)
+Item_arena list_contents(State s);
+\n--- src/state.h ---
+#pragma once
+
+#include <dirent.h>
+#include <stdbool.h>
+#include <stdio.h>
+
+typedef enum { MODE_NORMAL, MODE_SEARCH } Mode;
+
+typedef struct {
+  char *path; // dynamically allocated full path
+  DIR *handle;
+  int selected; // index into filtered list
+  int offset;   // scroll offset (first visible item in filtered list)
+  bool running;
+
+  // New fields for statusline & search
+  Mode mode;
+  char *search_pattern; // current search string (allocated)
+  char *error_message;  // last error (cleared on next key)
+  size_t *filtered;     // indices into the full item list
+  size_t filtered_count;
+} State;
+
+// Initialize state from command line arguments
+State state_init(int argc, const char **argv);
+
+// Clean up state (close dir, free all allocated members)
+void state_kill(State *ptr);
+
+// Load a new directory (fullpath must be a valid string)
+void load_dir(State *ptr, const char *fullpath);
+\n--- src/utils.h ---
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <strings.h> // for strncasecmp
+#include <unistd.h>
 
-#include <ncurses.h>
+#define PROJECT "Finder"
 
-/* TODO: personalized assert */
-#include "../../stupid/utils.h"
+#define ASSERT(cond, msg, ...)                                                 \
+  do {                                                                         \
+    if (!(cond)) {                                                             \
+      fprintf(stderr, msg "\n", ##__VA_ARGS__);                                \
+      exit(EXIT_FAILURE);                                                      \
+    }                                                                          \
+  } while (0)
 
-typedef struct Window {
-  WINDOW *handle;
+#define _Arena_init(type)                                                      \
+  typedef struct type##_arena {                                                \
+    type *handle;                                                              \
+    size_t size;                                                               \
+  } type##_arena
 
-  int width;
-  int height;
-} Window;
+#define append(arena, x)                                                       \
+  do {                                                                         \
+    ++(arena).size;                                                            \
+    (arena).handle =                                                           \
+        realloc((arena).handle, (arena).size * sizeof(*(arena).handle));       \
+    ASSERT((arena).handle != NULL, "Failed to alloc byte");                    \
+    (arena).handle[(arena).size - 1] = (x);                                    \
+  } while (0)
 
-Window window_init();
-void update(Window w);
-void window_kill(Window *ptr);
+// Case‑insensitive substring check (needle in haystack)
+static bool str_contains_ignore_case(const char *haystack, const char *needle) {
+  if (!needle || !*needle)
+    return true;
+  size_t needle_len = strlen(needle);
+  for (; *haystack; ++haystack) {
+    if (strncasecmp(haystack, needle, needle_len) == 0)
+      return true;
+  }
+  return false;
+}
+
+#include "item.h"
+
+bool rm(char *path, Item i);
+\n--- src/item.h ---
+#pragma once
+
+#include <stdbool.h>
+#include <sys/stat.h>
+
+typedef struct {
+  bool is_dir; // true for directories
+  char *name;
+  char perms[11]; // permission string (e.g., "-rw-r--r--")
+} Item;
+
+#include "utils.h"
+
+_Arena_init(Item); // defines Item_arena
+
+// Convert mode_t to an ls -l style permission string (10 characters)
+void mode_to_str(mode_t mode, char out[11]);
+
+// Comparator for sorting items
+int cmp_item(const void *a, const void *b);
+
+// Free all memory used by an Item_arena
+void free_item_arena(Item_arena *arena);
+\n--- src/ui.h ---
+#pragma once
+
+#include "item.h"
+#include "state.h"
+
+// Initialize ncurses with colors
+void ncurses_init(void);
+
+// Draw the entire interface (uses state->filtered for display)
+void redraw(State *state, Item_arena items, int height, int width);
+
+// Helper: open the selected file with nvim
+void open_with_nvim(const char *filename);
+
+// Set an error message (will be displayed and cleared on next key)
+void set_error(State *state, const char *fmt, ...);
+
+// Recompute filtered indices based on current search pattern and mode
+void update_filtered(State *state, Item_arena items);
 
 ===== SHADERS =====
 
