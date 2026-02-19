@@ -1,0 +1,224 @@
+# ============================================================================
+# Project Configuration (from project.json)
+# ============================================================================
+PROJECT_JSON := project.json
+
+# Extract project settings with error handling
+ifneq ("$(wildcard $(PROJECT_JSON))","")
+    PROJECT_NAME   := $(shell jq -r '.name' $(PROJECT_JSON))
+    PROJECT_TYPE   := $(shell jq -r '.type // "Executable"' $(PROJECT_JSON))
+    LANG           := $(shell jq -r '.lang // "C++"' $(PROJECT_JSON))
+    COMPILER_PATH  := $(shell jq -r '.compiler_path // ""' $(PROJECT_JSON))
+    SRC_EXT        := $(shell jq -r '.ext // ".cpp"' $(PROJECT_JSON))
+    SRC_DIR        := $(shell jq -r '.src_dir // "src"' $(PROJECT_JSON))
+    BIN_DIR        := $(shell jq -r '.bin_dir // "bin"' $(PROJECT_JSON))
+    INC_DIR        := $(shell jq -r '.inc_dir // "include"' $(PROJECT_JSON))
+    LIB_DIR        := $(shell jq -r '.lib_dir // "lib"' $(PROJECT_JSON))
+else
+    $(error "$(PROJECT_JSON) not found! Create it or use defaults")
+endif
+
+# ============================================================================
+# Compiler & Language Configuration
+# ============================================================================
+# Determine compiler based on LANGUAGE (lang field), not project type
+ifeq ($(LANG),C)
+    # C project configuration
+    ifeq ($(COMPILER_PATH),)
+        CC := gcc
+    else
+        CC := $(COMPILER_PATH)
+    endif
+#    STD := c2x
+    SRC_FILES := $(shell find $(SRC_DIR) -name "*.c" 2>/dev/null)
+else
+    # C++ project configuration (default)
+    ifeq ($(COMPILER_PATH),)
+        CC := g++
+    else
+        CC := $(COMPILER_PATH)
+    endif
+    STD := c++26
+    SRC_FILES := $(shell find $(SRC_DIR) -name "*.cpp" -o -name "*.cc" -o -name "*.cxx" 2>/dev/null)
+endif
+
+# Debug: Print what we found
+$(info Language: $(LANG))
+$(info Source files: $(SRC_FILES))
+
+# ============================================================================
+# Build Configuration
+# ============================================================================
+OBJ_DIR       := $(BIN_DIR)/obj
+TARGET        := $(BIN_DIR)/$(PROJECT_NAME)
+
+# Object files in bin/obj directory with flat structure
+OBJ_FILES     := $(patsubst $(SRC_DIR)/%,$(OBJ_DIR)/%.o,$(basename $(SRC_FILES)))
+
+# Dependency files for auto-rebuild
+DEP_FILES     := $(OBJ_FILES:.o=.d)
+
+# ============================================================================
+# Compiler & Linker Flags
+# ============================================================================
+# Warning flags (common for C and C++)
+WARNINGS := -Wall -Wextra -Wpedantic \
+            -Wshadow -Wunused -Wformat=2
+
+# Language-specific warnings
+ifeq ($(LANG),C)
+    WARNINGS += -Wstrict-prototypes -Wmissing-prototypes \
+                -Wold-style-definition -Wbad-function-cast
+else
+    WARNINGS += -Wnon-virtual-dtor -Wold-style-cast \
+                -Wcast-align -Woverloaded-virtual \
+                -Wconversion -Wsign-conversion \
+                -Wnull-dereference -Wdouble-promotion
+endif
+
+# Optimization flags
+ifeq ($(BUILD_TYPE),release)
+    OPTIMIZE := -O3 -DNDEBUG -flto=auto
+else
+    OPTIMIZE := -Og -g3 -DDEBUG
+    BUILD_TYPE := debug
+endif
+
+# Include directories
+INCLUDES := -I$(INC_DIR) -I$(SRC_DIR)
+LIB_PATHS := -L$(LIB_DIR)
+LIB_PATHS += -lm -lncurses
+
+# Compiler flags
+CFLAGS := # -std=$(STD)
+CFLAGS += $(WARNINGS) $(OPTIMIZE) $(INCLUDES) \
+          -fdiagnostics-color=always \
+          -MMD -MP  # Generate dependency files
+
+# Linker flags
+LDFLAGS  := $(OPTIMIZE) $(LIB_PATHS)
+
+# ============================================================================
+# Phony Targets
+# ============================================================================
+.PHONY: all clean run debug release test help info dirs
+
+# Default target
+all: dirs $(TARGET)
+
+# Build and run
+run: $(TARGET)
+	@echo "🚀 Running $(PROJECT_NAME)..."
+	@./$(TARGET)
+
+# Debug build (default)
+debug:
+	@$(MAKE) BUILD_TYPE=debug
+
+# Release build
+release:
+	@$(MAKE) BUILD_TYPE=release
+
+# Clean everything
+clean:
+	@echo "🧹 Cleaning build artifacts..."
+	@rm -rf $(OBJ_DIR) $(TARGET) compile_commands.json
+
+# Create necessary directories
+dirs:
+	@mkdir -p $(BIN_DIR) $(OBJ_DIR) $(LIB_DIR)
+
+# Show project info
+info:
+	@echo "📊 Project Configuration:"
+	@echo "  Name:        $(PROJECT_NAME)"
+	@echo "  Type:        $(PROJECT_TYPE)"
+	@echo "  Language:    $(LANG)"
+	@echo "  Compiler:    $(CC)"
+	@echo "  Standard:    $(STD)"
+	@echo "  Build Type:  $(BUILD_TYPE)"
+	@echo "  Source Dir:  $(SRC_DIR)"
+	@echo "  Include Dir: $(INC_DIR)"
+	@echo "  Binary Dir:  $(BIN_DIR)"
+	@echo "  Library Dir: $(LIB_DIR)"
+	@echo "  Object Dir:  $(OBJ_DIR)"
+	@echo "  Source Ext:  $(SRC_EXT)"
+	@echo "  Source Files: $(words $(SRC_FILES))"
+	@echo "  Target:      $(TARGET)"
+	@if [ -n "$(SRC_FILES)" ]; then \
+	    echo "  Source List: $(SRC_FILES)"; \
+	fi
+
+# Help message
+help:
+	@echo "📖 Available targets:"
+	@echo "  all      - Build the project (default)"
+	@echo "  debug    - Build with debug symbols"
+	@echo "  release  - Build with optimizations"
+	@echo "  run      - Build and run the executable"
+	@echo "  test     - Run tests (if available)"
+	@echo "  clean    - Remove build artifacts"
+	@echo "  dirs     - Create build directories"
+	@echo "  info     - Show project configuration"
+	@echo "  help     - Show this help message"
+	@echo ""
+	@echo "🔧 Build configuration: BUILD_TYPE=$(BUILD_TYPE)"
+
+# ============================================================================
+# Build Rules
+# ============================================================================
+# Link object files into executable
+$(TARGET): $(OBJ_FILES) | dirs
+	@echo "🔗 Linking $(notdir $@)..."
+	@$(CC) $(OBJ_FILES) $(LDFLAGS) -o $@
+	@echo "✅ Built $(PROJECT_NAME) [$(BUILD_TYPE) | $(LANG)]"
+
+# Compilation rule for C files
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | dirs
+	@echo "🔨 Compiling $(notdir $<)..."
+	@mkdir -p $(dir $@)
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+# Compilation rule for C++ files
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp | dirs
+	@echo "🔨 Compiling $(notdir $<)..."
+	@mkdir -p $(dir $@)
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cc | dirs
+	@echo "🔨 Compiling $(notdir $<)..."
+	@mkdir -p $(dir $@)
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.cxx | dirs
+	@echo "🔨 Compiling $(notdir $<)..."
+	@mkdir -p $(dir $@)
+	@$(CC) $(CFLAGS) -c $< -o $@
+
+# Include auto-generated dependency files
+-include $(DEP_FILES)
+
+# ============================================================================
+# Additional Features
+# ============================================================================
+# Generate compile_commands.json for LSP/tooling
+compile_commands.json: $(SRC_FILES)
+	@echo "📝 Generating compile_commands.json..."
+	@bear -- make -nk 2>/dev/null | grep -A1 "CC=" | tail -n1 > $@ || true
+
+# Run tests if test directory exists
+TEST_DIR := tests
+ifneq ("$(wildcard $(TEST_DIR))","")
+test: $(TARGET)
+	@echo "🧪 Running tests..."
+	@$(MAKE) -C $(TEST_DIR) test 2>/dev/null || echo "No test suite found"
+else
+test:
+	@echo "⚠️  Test directory '$(TEST_DIR)' not found"
+endif
+
+# ============================================================================
+# Print variable for debugging
+# ============================================================================
+print-%:
+	@echo '$*=$($*)'

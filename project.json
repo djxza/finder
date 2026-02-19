@@ -1,0 +1,15 @@
+{
+  "name": "finder",
+  "type": "Executable",
+  "version": "1.0.0",
+  "description": "",
+  "author": "djouk",
+  "license": "MIT",
+  "lang": "C",
+  "compiler_path": "clang",
+  "src_dir": "src",
+  "lib_dir": "lib",
+  "bin_dir": "bin",
+  "inc_dir": "src",
+  "ext": ".c"
+}
